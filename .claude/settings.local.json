@@ -1,0 +1,40 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(mkdir:*)",
+      "Bash(python scrape_ntsb.py:*)",
+      "Bash(redis-cli ping:*)",
+      "Bash(brew services start:*)",
+      "Bash(redis-server:*)",
+      "Bash(brew install:*)",
+      "Bash(python3 -m venv:*)",
+      "Bash(./venv/bin/pip install:*)",
+      "Bash(npm install:*)",
+      "Bash(./venv/bin/python:*)",
+      "Bash(curl:*)",
+      "Bash(python3:*)",
+      "Bash(pkill:*)",
+      "Bash(pgrep:*)",
+      "Bash(chmod:*)",
+      "Bash(./verify_mapbox.sh)",
+      "Bash(lsof:*)",
+      "Bash(./diagnose_websocket.sh:*)",
+      "Bash(npx tsc:*)",
+      "Read(//private/tmp/**)",
+      "Bash(kill:*)",
+      "Bash(cat:*)",
+      "Bash(xargs kill:*)",
+      "Bash(./venv/bin/pip show:*)",
+      "Bash(npm run build:*)",
+      "Bash(killall:*)",
+      "Bash(awk:*)",
+      "Bash(npm run preview:*)",
+      "Bash(ps:*)",
+      "Read(//Users/revanshphull/**)",
+      "Bash(git remote add:*)",
+      "Bash(git add:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
