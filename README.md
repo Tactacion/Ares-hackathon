@@ -1,5 +1,4 @@
 # ARES - Aerial Risk Evaluation System
-
 **Autonomous Air Traffic Control powered by Multi-Agent AI**
 
 A cutting-edge autonomous ATC system that uses specialized AI agents to detect conflicts, manage separation, issue voice clearances, and maintain safe airspace operations.
