@@ -14,6 +14,7 @@ class Aircraft(BaseModel):
     vertical_rate_fpm: float
     on_ground: bool
     last_contact: float
+    predicted_path: List[List[float]] = []  # List of [lon, lat] coordinates
 
 class WeatherCondition(BaseModel):
     """Parsed METAR/TAF data"""
@@ -59,6 +60,7 @@ class SectorStatus(BaseModel):
     active_alerts: List[Union['RiskAlert', 'EnhancedRiskAlert']]
     weather: Optional[WeatherCondition] = None
     controller_workload: Literal["LOW", "MODERATE", "HIGH", "CRITICAL"]
+    safe_corridors: List[List[List[float]]] = [] # List of paths (each path is a list of [lon, lat])
 
 
 # ============================================================================

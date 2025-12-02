@@ -1,3 +1,4 @@
+
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -5,6 +6,9 @@ from contextlib import asynccontextmanager
 import asyncio
 from datetime import datetime
 from typing import List
+import logging
+import os
+from pydantic import BaseModel
 
 from config import get_settings
 from models import SectorStatus
@@ -15,13 +19,14 @@ from services.risk_detector import RiskDetector
 from services.risk_detector_enhanced import enhanced_risk_detector
 from services.ai_copilot import AICopilot
 from services.voice_controller import VoiceController
-from services.voice_controller_pro import pro_voice_controller, Priority, UrgencyLevel
+from services.voice_controller_pro import pro_voice_controller, Priority, UrgencyLevel, ProVoiceController
 from services.risk_scoring import risk_scoring_engine
 from services.demo_data import demo_generator
 from services.autonomous_controller_v2 import MultiAgentController
 from services.testing_suite import TestingSuite, testing_suite
 from services.simulation_manager import EnhancedSimulationManager
 from services.task_manager import task_manager
+from services.trajectory_service import trajectory_service
 from task_models import TaskPriority, TaskCategory
 
 settings = get_settings()
@@ -75,6 +80,21 @@ async def lifespan(app: FastAPI):
         weather_service=weather_service,
         risk_detector=enhanced_risk_detector,
         autonomous_controller=autonomous_controller
+    )
+
+    # FORCE LOAD SCENARIO FOR DEMO
+    print("[DEMO] 🚨 FORCING HIGH TRAFFIC SCENARIO FOR LIVE DEMO")
+    global active_scenario_aircraft
+    active_scenario_aircraft = simulation_manager.create_scenario("high_workload")
+    
+    # QUEUE WELCOME VOICE MESSAGE
+    print("[DEMO] 🎙️ Queueing Welcome Message")
+    await pro_voice_controller.queue_transmission(
+        callsign="SYSTEM",
+        message="ARES Autonomous Control System Online. Sector saturation at 85%. Monitoring active.",
+        priority=Priority.CRITICAL,
+        urgency=UrgencyLevel.IMMEDIATE,
+        frequency=118.5
     )
 
     # Start background tasks
@@ -295,12 +315,21 @@ async def websocket_endpoint(websocket: WebSocket):
                     aircraft = active_scenario_aircraft
                 else:
                     # Try to fetch real aircraft data, fallback to demo
+                    print("📡 Fetching real aircraft data...")
                     aircraft = await flight_tracker.get_aircraft_in_radius()
+                    print(f"📡 Real data count: {len(aircraft) if aircraft else 0}")
+                    
                     if not aircraft:
+                        print("⚠️ No real aircraft found. Falling back to DEMO data.")
                         aircraft = demo_generator.get_demo_aircraft()
 
                 # Try to fetch real weather, fallback to demo
-                weather = await weather_service.get_metar(settings.target_airport)
+                try:
+                    weather = await weather_service.get_metar(settings.target_airport)
+                except Exception as e:
+                    print(f"⚠️ Weather fetch failed: {e}")
+                    weather = None
+                
                 if not weather:
                     weather = demo_generator.get_demo_weather()
 
@@ -316,6 +345,23 @@ async def websocket_endpoint(websocket: WebSocket):
                 # Ensure workload is a string (not an enum)
                 workload = str(workload_metrics.workload_level) if workload_metrics and workload_metrics.workload_level else "LOW"
 
+                # Calculate trajectories for all aircraft
+                for ac in aircraft:
+                    ac.predicted_path = trajectory_service.calculate_trajectory(ac)
+
+                # --- SAFE CORRIDORS (Navigation Service) ---
+                from services.navigation_service import navigation_service
+                safe_corridors = []
+                
+                # ALWAYS ON MODE: Generate safe corridors for ALL aircraft
+                # This allows the user to see the "Yellow Brick Road" logic in action
+                for ac in aircraft:
+                    # Calculate a safe path (simulated avoidance maneuver)
+                    # We only generate it for airborne aircraft to avoid cluttering the ground
+                    if not ac.on_ground and ac.velocity_kts > 50:
+                        path = navigation_service.calculate_safe_corridor(ac)
+                        safe_corridors.append(path)
+
                 # Build sector status
                 sector_status = SectorStatus(
                     timestamp=datetime.now(),
@@ -323,7 +369,8 @@ async def websocket_endpoint(websocket: WebSocket):
                     aircraft=aircraft,
                     active_alerts=alerts,
                     weather=weather if weather else None,
-                    controller_workload=workload
+                    controller_workload=workload,
+                    safe_corridors=safe_corridors
                 )
 
                 # Broadcast to all clients (serialize datetime to string)
@@ -337,6 +384,8 @@ async def websocket_endpoint(websocket: WebSocket):
 
             except Exception as e:
                 print(f"❌ Error in update loop: {str(e)}")
+                import traceback
+                traceback.print_exc()
                 # Don't crash - keep trying
                 await asyncio.sleep(2)
 
@@ -689,6 +738,28 @@ async def get_risk_scoring_info():
 # ============================================================================
 # AUTONOMOUS AI CONTROLLER ENDPOINTS
 # ============================================================================
+
+class CommandRequest(BaseModel):
+    command: str
+
+@app.post("/api/ai/command")
+async def process_ai_command(request: CommandRequest):
+    """
+    Process a natural language command via Central Cortex.
+    """
+    # Get current aircraft state (simplified)
+    aircraft_data = [ac.dict() for ac in aircraft_db.values()]
+    
+    # Process via Gemini
+    action_plan = await central_cortex.process_command(request.command, aircraft_data)
+    
+    # Execute Side Effects (Demo Logic)
+    if action_plan.get("action") == "ROUTE_AVOIDANCE":
+        # In a real app, we would trigger the calculation here.
+        # For the hackathon, we'll set a flag or just return the plan for the frontend to react.
+        pass
+        
+    return action_plan
 
 @app.get("/api/ai/actions")
 async def get_ai_actions():
@@ -1290,6 +1361,28 @@ async def create_task(request: dict):
     except Exception as e:
         return JSONResponse(status_code=400, content={"error": str(e)})
 
+
+# --- TACTICAL ANALYSIS ENDPOINT ---
+from services.tactical_analyst import TacticalAnalyst
+tactical_analyst = TacticalAnalyst()
+
+@app.post("/api/tactical/analyze")
+async def trigger_tactical_analysis():
+    """
+    Manually trigger a tactical analysis of the current sector.
+    Returns the GeoJSON of the tactical zones/paths.
+    """
+    # Fetch real aircraft data
+    aircraft = await flight_tracker.get_aircraft_in_radius()
+    if not aircraft:
+        aircraft = demo_generator.get_demo_aircraft()
+        
+    aircraft_list = [ac.dict() for ac in aircraft]
+    
+    # Run analysis (this might take a few seconds, so we await)
+    result_geojson = await tactical_analyst.analyze_sector(aircraft_list)
+    
+    return result_geojson
 
 if __name__ == "__main__":
     import uvicorn

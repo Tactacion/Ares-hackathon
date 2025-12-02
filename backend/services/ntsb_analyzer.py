@@ -1,101 +1,72 @@
 import json
-from typing import List, Optional, Dict
-import sys
 import os
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-from models import NTSBReference
+from typing import List, Optional, Dict
+from models import NTSBReference, Aircraft
 from config import get_settings
 
 settings = get_settings()
 
 class NTSBAnalyzer:
     """
-    Analyzes current situations against NTSB accident database
-    This is our COMPETITIVE ADVANTAGE
+    Analyzes current situations against NTSB accident database.
+    Uses 'Risk Profiles' to detect dangerous patterns in real-time.
     """
 
     def __init__(self):
-        self.load_patterns()
+        self.profiles = []
+        self.load_profiles()
 
-    def load_patterns(self):
-        """Load NTSB risk patterns from scraped data"""
+    def load_profiles(self):
+        """Load NTSB risk profiles from JSON"""
         try:
-            with open(settings.ntsb_data_path, 'r') as f:
-                data = json.load(f)
-                self.accidents = data.get("accidents", [])
+            path = os.path.join("backend", "data", "risk_profiles.json")
+            if os.path.exists(path):
+                with open(path, 'r') as f:
+                    data = json.load(f)
+                    self.profiles = data.get("profiles", [])
+                print(f"✅ Loaded {len(self.profiles)} NTSB risk profiles")
+            else:
+                print(f"⚠️ Risk profiles not found at {path}")
+        except Exception as e:
+            print(f"❌ Error loading risk profiles: {e}")
 
-            with open("backend/data/risk_patterns.json", 'r') as f:
-                self.patterns = json.load(f).get("patterns", {})
-
-            print(f"✅ Loaded {len(self.accidents)} NTSB accidents")
-            print(f"   - {len(self.patterns.get('runway_incursion', []))} runway incursions")
-            print(f"   - {len(self.patterns.get('separation_violation', []))} separation violations")
-
-        except FileNotFoundError:
-            print("⚠️ NTSB data not found. Run scrape_ntsb.py first!")
-            self.accidents = []
-            self.patterns = {}
-
-    def find_similar_runway_incursion(self, scenario: str) -> Optional[NTSBReference]:
+    def analyze_aircraft(self, aircraft: Aircraft) -> Optional[NTSBReference]:
         """
-        Find NTSB runway incursion case similar to current scenario
+        Compare aircraft telemetry against historical crash profiles.
+        Returns an NTSBReference if a match is found.
         """
-        incursions = self.patterns.get("runway_incursion", [])
-        if not incursions:
-            return None
+        for profile in self.profiles:
+            conditions = profile.get("conditions", {})
+            match = True
+            
+            # Check Altitude
+            if "altitude_ft_max" in conditions:
+                if aircraft.altitude_ft > conditions["altitude_ft_max"]:
+                    match = False
+            
+            # Check Vertical Speed (Descent)
+            if "vertical_speed_fpm_max" in conditions:
+                # Note: vertical_speed is usually negative for descent
+                if aircraft.vertical_rate_fpm > conditions["vertical_speed_fpm_max"]: 
+                    match = False
 
-        # For demo, return most recent severe case
-        # In production, use semantic similarity
-        for incident in incursions:
-            if incident.get("injuries", 0) > 0:  # Severe case
+            # Check Airspeed
+            if "airspeed_kts_max" in conditions:
+                if aircraft.velocity_kts > conditions["airspeed_kts_max"]:
+                    match = False
+
+            # Check Ground Status
+            if "on_ground" in conditions:
+                if aircraft.on_ground != conditions["on_ground"]:
+                    match = False
+
+            if match:
                 return NTSBReference(
-                    event_id=incident.get("id", "UNKNOWN"),
-                    date=incident.get("date", ""),
-                    location=incident.get("location", ""),
-                    description=incident.get("narrative", "")[:200],
-                    similar_factors=["runway_occupied", "clearance_issued", "low_visibility"]
+                    event_id=profile["id"],
+                    date="HISTORICAL",
+                    location="Similar Profile Match",
+                    description=f"MATCHED PROFILE: {profile['name']}. {profile['description']}",
+                    similar_factors=profile["risk_factors"]
                 )
-
-        # Fallback to first incident
-        incident = incursions[0]
-        return NTSBReference(
-            event_id=incident.get("id", "UNKNOWN"),
-            date=incident.get("date", ""),
-            location=incident.get("location", ""),
-            description=incident.get("narrative", "")[:200],
-            similar_factors=["runway_incursion"]
-        )
-
-    def find_similar_separation_violation(self) -> Optional[NTSBReference]:
-        """Find similar separation violation case"""
-        violations = self.patterns.get("separation_violation", [])
-        if not violations:
-            return None
-
-        incident = violations[0]
-        return NTSBReference(
-            event_id=incident.get("id", "UNKNOWN"),
-            date=incident.get("date", ""),
-            location="Multiple locations",
-            description=incident.get("narrative", "")[:200],
-            similar_factors=["inadequate_separation", "controller_workload"]
-        )
-
-    def get_weather_accident_count(self, conditions: List[str]) -> int:
-        """Count NTSB accidents with similar weather conditions"""
-        weather_incidents = self.patterns.get("weather_related", [])
-        count = 0
-
-        for incident in weather_incidents:
-            incident_conditions = incident.get("conditions", [])
-            if any(cond in incident_conditions for cond in conditions):
-                count += 1
-
-        return count
-        for incident in weather_incidents:
-            incident_conditions = incident.get("conditions", [])
-            if any(cond in incident_conditions for cond in conditions):
-                count += 1
-
-        return count
+        
+        return None

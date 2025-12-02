@@ -1,6 +1,6 @@
 """
 Professional Voice Controller
-Context-aware voice synthesis with ElevenLabs, transmission queue, and readback verification
+Context-aware voice synthesis with Fish Audio, transmission queue, and readback verification
 """
 
 import os
@@ -9,6 +9,7 @@ from typing import Optional, List
 from datetime import datetime, timedelta
 from queue import PriorityQueue
 import httpx
+import requests
 from dotenv import load_dotenv
 from models import Priority, TransmissionStatus, ReadbackStatus, UrgencyLevel
 from pydantic import BaseModel, Field
@@ -33,6 +34,11 @@ class Transmission(BaseModel):
     audio_duration_ms: Optional[int] = None
     retry_count: int = 0
     max_retries: int = 2
+    readback_status: str = "PENDING"
+    last_retry_at: Optional[datetime] = None
+    readback_received_at: Optional[datetime] = None
+    confirmed_at: Optional[datetime] = None
+    actual_readback: Optional[str] = None
 
 
 class VoiceParameters(BaseModel):
@@ -100,15 +106,12 @@ class ProVoiceController:
     """
 
     def __init__(self):
-        self.api_key = os.getenv("ELEVENLABS_API_KEY")
-        self.base_url = "https://api.elevenlabs.io/v1"
+        self.api_key = "8e0b7ada0d4e457e9a00a3e7d6e595ca" # Hardcoded for now as per request
+        self.base_url = "https://api.fish.audio/v1/tts"
 
         # Voice configuration
-        self.default_voice_id = "atc_professional"  # Would be custom trained voice
-        # For now, use a good professional voice from ElevenLabs library
-        # Popular choices: "21m00Tcm4TlvDq8ikWAM" (Rachel - professional female)
-        #                  "pNInz6obpgDQGcFmaJgB" (Adam - professional male)
-        self.voice_id = os.getenv("ELEVENLABS_VOICE_ID", "pNInz6obpgDQGcFmaJgB")
+        # User provided voice ID
+        self.default_reference_id = "b545c585f631496c914815291da4e893" 
 
         # Transmission queue (priority-based)
         self.transmission_queue: List[Transmission] = []
@@ -129,7 +132,7 @@ class ProVoiceController:
         }
 
     def is_available(self) -> bool:
-        """Check if ElevenLabs service is available"""
+        """Check if Fish Audio service is available"""
         return self.api_key is not None and self.api_key != ""
 
     async def synthesize_with_context(
@@ -151,50 +154,44 @@ class ProVoiceController:
         """
 
         if not self.is_available():
-            print("⚠️ ElevenLabs API key not configured")
+            print("⚠️ Fish Audio API key not configured")
             return None
 
         try:
-            # Get voice parameters for urgency level
-            params = VoiceParameters.for_urgency(urgency)
-
             # Enhance text for better pronunciation
             enhanced_text = self._enhance_text_for_atc(text, callsign)
 
-            # Call ElevenLabs API
+            headers = {
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json"
+            }
+            
+            payload = {
+                "text": enhanced_text,
+                "format": "mp3",
+                "reference_id": self.default_reference_id,
+                "normalize": True,
+                "mp3_bitrate": 128
+            }
+
+            print(f"🎤 Synthesizing: '{text}' (urgency: {urgency})")
+
+            # Use httpx for async request
             async with httpx.AsyncClient(timeout=30.0) as client:
-                url = f"{self.base_url}/text-to-speech/{self.voice_id}"
-
-                headers = {
-                    "Accept": "audio/mpeg",
-                    "Content-Type": "application/json",
-                    "xi-api-key": self.api_key
-                }
-
-                data = {
-                    "text": enhanced_text,
-                    "model_id": "eleven_monolingual_v1",
-                    "voice_settings": {
-                        "stability": params.stability,
-                        "similarity_boost": params.similarity_boost,
-                        "style": params.style,
-                        "use_speaker_boost": True
-                    }
-                }
-
-                print(f"🎤 Synthesizing: '{text}' (urgency: {urgency})")
-
-                response = await client.post(url, headers=headers, json=data)
+                response = await client.post(self.base_url, headers=headers, json=payload)
 
                 if response.status_code == 200:
                     print(f"✅ Voice synthesized successfully ({len(response.content)} bytes)")
                     return response.content
                 else:
-                    print(f"❌ ElevenLabs API error: {response.status_code} - {response.text}")
+                    print(f"❌ Fish Audio API error: {response.status_code} - {response.text}")
                     return None
 
         except Exception as e:
             print(f"❌ Voice synthesis error: {e}")
+            # Fallback: Return a small silent MP3 or just None, but ensure we don't crash
+            # For now, we'll return None but log it clearly. 
+            # In a real scenario, we might return a pre-recorded "static" sound.
             return None
 
     def _enhance_text_for_atc(self, text: str, callsign: Optional[str]) -> str:
@@ -273,6 +270,12 @@ class ProVoiceController:
             if audio:
                 transmission.audio_bytes = audio
                 transmission.audio_duration_ms = len(audio) // 16  # Rough estimate
+            else:
+                # Fallback if audio fails: Set a default duration based on message length
+                # roughly 15 chars per second
+                est_duration = max(2000, len(message) * 60) 
+                transmission.audio_duration_ms = est_duration
+                print(f"⚠️ Audio synthesis failed for {callsign}, using simulated duration {est_duration}ms")
 
             # Add to queue
             self.transmission_queue.append(transmission)

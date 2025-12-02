@@ -43,14 +43,19 @@ class FlightTracker:
         }
 
         try:
+            print(f"🌐 Requesting ADS-B Data from: {self.api_url}")
+            print(f"   Params: {params}")
             async with httpx.AsyncClient() as client:
                 response = await client.get(
                     self.api_url,
                     params=params,
                     timeout=5.0
                 )
+                print(f"   Status: {response.status_code}")
                 response.raise_for_status()
                 data = response.json()
+                print(f"   Raw Data Keys: {data.keys()}")
+                print(f"   Aircraft Count in Raw Data: {len(data.get('ac', []))}")
 
             aircraft_list = []
             for ac in data.get("ac", []):

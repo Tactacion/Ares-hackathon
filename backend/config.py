@@ -3,9 +3,10 @@ from functools import lru_cache
 
 class Settings(BaseSettings):
     # API Keys
-    anthropic_api_key: str
+    gemini_api_key: str = ""
+    anthropic_api_key: str = ""
     elevenlabs_api_key: str = ""
-    mapbox_token: str
+    mapbox_token: str = "pk.placeholder" # Placeholder to pass validation
 
     # Server
     backend_host: str = "0.0.0.0"

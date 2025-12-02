@@ -11,6 +11,7 @@ export interface Aircraft {
   vertical_rate_fpm: number;
   on_ground: boolean;
   last_contact: number;
+  predicted_path?: number[][]; // List of [lon, lat]
 }
 
 export interface WeatherCondition {
@@ -61,9 +62,19 @@ export interface SectorStatus {
   active_alerts: RiskAlert[];
   weather: WeatherCondition | null;
   controller_workload: WorkloadLevel;
+  safe_corridors?: number[][][]; // List of paths (each path is list of [lon, lat])
 }
 
 export interface WebSocketMessage {
   type: "sector_update" | "alert" | "weather_update";
   data: SectorStatus;
+}
+
+export interface Task {
+  id: string;
+  description: string;
+  priority: 'IMMEDIATE' | 'URGENT' | 'ROUTINE';
+  status: 'PENDING' | 'COMPLETED' | 'TRANSMITTED';
+  category: string;
+  created_at: string;
 }

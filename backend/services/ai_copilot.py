@@ -1,4 +1,4 @@
-import anthropic
+import google.generativeai as genai
 from typing import List, Optional
 import sys
 import os
@@ -11,12 +11,18 @@ settings = get_settings()
 
 class AICopilot:
     """
-    Claude-powered AI copilot for advanced reasoning
+    Gemini-powered AI copilot for advanced reasoning
     """
 
     def __init__(self):
-        self.client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
-        self.model = settings.ai_model
+        # Configure Gemini
+        gemini_key = os.getenv("GEMINI_API_KEY")
+        if gemini_key:
+            genai.configure(api_key=gemini_key)
+            self.model = genai.GenerativeModel('gemini-2.5-pro')
+        else:
+            print("⚠️ GEMINI_API_KEY not found in environment variables")
+            self.model = None
 
     async def analyze_complex_situation(
         self,
@@ -25,17 +31,16 @@ class AICopilot:
         alerts: List[RiskAlert]
     ) -> str:
         """
-        Use Claude to analyze complex situations requiring advanced reasoning
+        Use Gemini to analyze complex situations requiring advanced reasoning
         """
+        if not self.model:
+            return "AI analysis unavailable. API key missing."
+
         # Build context
         context = self._build_context(aircraft, weather, alerts)
 
         try:
-            message = self.client.messages.create(
-                model=self.model,
-                max_tokens=settings.ai_max_tokens,
-                temperature=settings.ai_temperature,
-                system="""You are ARES (Aerial Risk Evaluation System), an AI copilot for air traffic controllers.
+            prompt = f"""You are ARES (Aerial Risk Evaluation System), an AI copilot for air traffic controllers.
 Your role is to analyze aviation safety situations and provide clear, actionable recommendations.
 
 You have access to:
@@ -49,17 +54,13 @@ When analyzing situations:
 - Reference NTSB data when relevant
 - Provide specific actions, not vague advice
 - Use standard ATC phraseology for pilot communications
-- Consider controller workload during skeleton crew operations""",
-                messages=[
-                    {
-                        "role": "user",
-                        "content": context
-                    }
-                ]
-            )
+- Consider controller workload during skeleton crew operations
 
-            response = message.content[0].text
-            return response
+CONTEXT:
+{context}
+"""
+            response = await self.model.generate_content_async(prompt)
+            return response.text
 
         except Exception as e:
             print(f"❌ Error in AI analysis: {e}")
@@ -71,7 +72,7 @@ When analyzing situations:
         weather: Optional[WeatherCondition],
         alerts: List[RiskAlert]
     ) -> str:
-        """Build context string for Claude"""
+        """Build context string for Gemini"""
         context = "# Current Situation Analysis Request\n\n"
 
         # Aircraft summary
@@ -121,28 +122,23 @@ When analyzing situations:
         """
         Generate proper ATC phraseology for pilot communication
         """
+        if not self.model:
+            return f"{aircraft_callsign}, {alert.recommended_action}"
+
         try:
-            message = self.client.messages.create(
-                model=self.model,
-                max_tokens=200,
-                temperature=0.2,  # Very low for consistent phraseology
-                system="""You are an expert in FAA air traffic control phraseology.
+            prompt = f"""You are an expert in FAA air traffic control phraseology.
 Generate ONLY the exact radio transmission using standard ATC phraseology.
-Be concise. Do not explain or add commentary.""",
-                messages=[
-                    {
-                        "role": "user",
-                        "content": f"""Generate ATC radio transmission for:
+Be concise. Do not explain or add commentary.
+
+Generate ATC radio transmission for:
 Aircraft: {aircraft_callsign}
 Situation: {alert.description}
 Action Required: {alert.recommended_action}
 
 Output ONLY the radio transmission text."""
-                    }
-                ]
-            )
 
-            return message.content[0].text.strip()
+            response = await self.model.generate_content_async(prompt)
+            return response.text.strip()
 
         except Exception as e:
             print(f"❌ Error generating communication: {e}")

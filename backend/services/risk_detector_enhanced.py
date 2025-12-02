@@ -248,7 +248,8 @@ class EnhancedRiskDetector:
                     # Get risk factors
                     risk_factors = self.scoring_engine.get_risk_factors(risk_score, 'SEPARATION_VIOLATION')
 
-                    ntsb_ref = self.ntsb.find_similar_separation_violation()
+                    # ntsb_ref = self.ntsb.find_similar_separation_violation()
+                    ntsb_ref = None
 
                     # Generate actions based on risk tier
                     if risk_score.tier == RiskTier.CRITICAL:

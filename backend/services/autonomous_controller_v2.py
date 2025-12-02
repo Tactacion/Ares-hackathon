@@ -3,12 +3,13 @@ Enhanced Autonomous Multi-Agent ATC System
 Multiple specialized AI agents working together
 """
 import asyncio
-import anthropic
+import google.generativeai as genai
 import json
 from typing import List, Dict, Optional
 from datetime import datetime
 from models import Aircraft, WeatherCondition
 import logging
+import os
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +46,16 @@ class MultiAgentController:
     """
 
     def __init__(self, anthropic_api_key: str, voice_controller=None):
-        self.client = anthropic.Anthropic(api_key=anthropic_api_key)
+        # Initialize Gemini instead of Anthropic
+        # Note: anthropic_api_key argument kept for compatibility but ignored
+        gemini_key = os.getenv("GEMINI_API_KEY")
+        if gemini_key:
+            genai.configure(api_key=gemini_key)
+            self.model = genai.GenerativeModel('gemini-2.5-pro')
+        else:
+            logger.warning("GEMINI_API_KEY not found in environment variables")
+            self.model = None
+            
         self.voice_controller = voice_controller
         self.ai_actions: List[AIAction] = []
         self.monitoring_active = True
@@ -112,7 +122,12 @@ class MultiAgentController:
                                current_workload: str) -> List[AIAction]:
         """Run all AI agents in parallel"""
         try:
-            logger.info(f"[MULTI-AGENT] Running autonomous cycle: {len(aircraft)} aircraft, workload={current_workload}")
+            # Fix for .value error: ensure current_workload is a string
+            workload_str = current_workload
+            if hasattr(current_workload, 'value'):
+                workload_str = current_workload.value
+            
+            logger.info(f"[MULTI-AGENT] Running autonomous cycle: {len(aircraft)} aircraft, workload={workload_str}")
 
             # Run specialized agents
             all_actions = []
@@ -135,8 +150,8 @@ class MultiAgentController:
             all_actions.extend(safety_actions)
 
             # Agent 5: Workload Balancer (if overloaded)
-            if current_workload in ["HIGH", "CRITICAL"]:
-                balancing_actions = await self._workload_balancer_agent(aircraft, current_workload)
+            if workload_str in ["HIGH", "CRITICAL"]:
+                balancing_actions = await self._workload_balancer_agent(aircraft, workload_str)
                 all_actions.extend(balancing_actions)
 
             # Execute voice transmissions
@@ -359,13 +374,38 @@ class MultiAgentController:
         return actions
 
     async def _safety_monitor_agent(self, aircraft: List[Aircraft]) -> List[AIAction]:
-        """Agent 3: Detect abnormal situations"""
+        """Agent 3: Detect abnormal situations using NTSB profiles"""
         actions = []
+        from services.ntsb_analyzer import NTSBAnalyzer
+        from utils.console_logger import logger as ares_logger
+        
+        # Initialize analyzer if not exists
+        if not hasattr(self, 'ntsb_analyzer'):
+            self.ntsb_analyzer = NTSBAnalyzer()
 
         for ac in aircraft:
-            # Check for abnormal speeds
+            # 1. Check against NTSB Risk Profiles
+            ntsb_match = self.ntsb_analyzer.analyze_aircraft(ac)
+            
+            if ntsb_match:
+                ares_logger.log_risk_match(ac.callsign, ntsb_match.event_id, 0.95)
+                ares_logger.log_ai_thought("SAFETY_MONITOR", f"Detected {ntsb_match.description} pattern on {ac.callsign}. Initiating alert.")
+                
+                action = AIAction(
+                    agent="safety_monitor",
+                    action_type="SAFETY_ALERT",
+                    aircraft_callsign=ac.callsign,
+                    clearance=f"SAFETY ALERT, check altitude and speed immediately. Similar profile to {ntsb_match.event_id}",
+                    reason=f"Matched NTSB Profile: {ntsb_match.description}",
+                    priority="IMMEDIATE",
+                    auto_transmit=True
+                )
+                actions.append(action)
+                self.agent_stats["safety_monitor"]["anomalies_detected"] += 1
+
+            # 2. Check for abnormal speeds (Legacy check)
             if ac.on_ground and ac.velocity_kts > 200:
-                logger.warning(f"[SAFETY MONITOR] Abnormal ground speed: {ac.callsign} at {ac.velocity_kts}kts")
+                ares_logger.log_risk_match(ac.callsign, "HIGH SPEED TAXI", 0.99)
                 action = AIAction(
                     agent="safety_monitor",
                     action_type="WARNING",
@@ -378,9 +418,9 @@ class MultiAgentController:
                 actions.append(action)
                 self.agent_stats["safety_monitor"]["anomalies_detected"] += 1
 
-            # Check for abnormal vertical rates
+            # 3. Check for abnormal vertical rates
             if abs(ac.vertical_rate_fpm) > 3000 and ac.altitude_ft < 10000:
-                logger.warning(f"[SAFETY MONITOR] Excessive vertical rate: {ac.callsign} at {ac.vertical_rate_fpm}fpm")
+                ares_logger.log_ai_thought("SAFETY_MONITOR", f"{ac.callsign} vertical rate {ac.vertical_rate_fpm}fpm exceeds safety limits.")
                 action = AIAction(
                     agent="safety_monitor",
                     action_type="WARNING",
